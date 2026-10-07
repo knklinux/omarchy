@@ -119,22 +119,41 @@ monitor_name='DP-1\"]]);os.execute([[id]]);--'
 printf '[{"name":"%s","specialWorkspace":{"name":""}}]\n' "$monitor_name" >"$tmpdir/monitors.json"
 : >"$tmpdir/calls"
 set +e
-PATH="$tmpdir/bin:$PATH" TEST_DIR="$tmpdir" XDG_RUNTIME_DIR="$tmpdir" HYPRLAND_INSTANCE_SIGNATURE=test timeout 10 "$ROOT/bin/omarchy-launch-screensaver" force >/dev/null 2>&1
+PATH="$tmpdir/bin:$PATH" TEST_DIR="$tmpdir" XDG_RUNTIME_DIR="$tmpdir" HYPRLAND_INSTANCE_SIGNATURE=test timeout 10 "$ROOT/bin/omarchy-launch-screensaver" force >/dev/null 2>"$tmpdir/err"
 status=$?
 set -e
-(( status != 0 )) || fail "an unsafe output name is refused" "$(<"$tmpdir/calls")"
+(( status == 1 )) || fail "an unsafe output name is refused with exit 1, not a timeout" "status=$status $(<"$tmpdir/calls")"
+grep -q "Refusing unsafe monitor name" "$tmpdir/err" || fail "an unsafe output name is refused with the monitor message" "stderr=$(<"$tmpdir/err")"
 grep -q "exec_cmd" "$tmpdir/calls" && fail "an unsafe output name never reaches the Lua dispatch" "$(<"$tmpdir/calls")"
 grep -q "os.execute" "$tmpdir/calls" && fail "an unsafe output name cannot inject Lua"
+grep -q "hl.dsp.focus" "$tmpdir/calls" && fail "an unsafe output name does not move focus before refusing" "$(<"$tmpdir/calls")"
 pass "an unsafe output name is refused before the Lua dispatch"
 
 workspace_name='special:x]]);os.execute([[id]]);--'
 printf '[{"name":"DP-1","specialWorkspace":{"name":"%s"}}]\n' "$workspace_name" >"$tmpdir/monitors.json"
 : >"$tmpdir/calls"
 set +e
-PATH="$tmpdir/bin:$PATH" TEST_DIR="$tmpdir" XDG_RUNTIME_DIR="$tmpdir" HYPRLAND_INSTANCE_SIGNATURE=test timeout 10 "$ROOT/bin/omarchy-launch-screensaver" force >/dev/null 2>&1
+PATH="$tmpdir/bin:$PATH" TEST_DIR="$tmpdir" XDG_RUNTIME_DIR="$tmpdir" HYPRLAND_INSTANCE_SIGNATURE=test timeout 10 "$ROOT/bin/omarchy-launch-screensaver" force >/dev/null 2>"$tmpdir/err"
 status=$?
 set -e
-(( status != 0 )) || fail "an unsafe special-workspace name is refused" "$(<"$tmpdir/calls")"
+(( status == 1 )) || fail "an unsafe special-workspace name is refused with exit 1, not a timeout" "status=$status $(<"$tmpdir/calls")"
+grep -q "Refusing unsafe workspace name" "$tmpdir/err" || fail "an unsafe special-workspace name is refused with the workspace message" "stderr=$(<"$tmpdir/err")"
 grep -q "exec_cmd" "$tmpdir/calls" && fail "an unsafe special-workspace name never reaches the Lua dispatch" "$(<"$tmpdir/calls")"
 grep -q "os.execute" "$tmpdir/calls" && fail "an unsafe special-workspace name cannot inject Lua"
+grep -q "hl.dsp.focus" "$tmpdir/calls" && fail "an unsafe special-workspace name does not move focus before refusing" "$(<"$tmpdir/calls")"
 pass "an unsafe special-workspace name is refused before the Lua dispatch"
+
+# A refusal on a later monitor must not leave an earlier screen on the wrong
+# monitor, so every name is checked before the first terminal is launched.
+printf '[{"name":"DP-1","specialWorkspace":{"name":""}},{"name":"%s","specialWorkspace":{"name":""}}]
+' "$monitor_name" >"$tmpdir/monitors.json"
+: >"$tmpdir/calls"
+set +e
+PATH="$tmpdir/bin:$PATH" TEST_DIR="$tmpdir" XDG_RUNTIME_DIR="$tmpdir" HYPRLAND_INSTANCE_SIGNATURE=test timeout 10 "$ROOT/bin/omarchy-launch-screensaver" force >/dev/null 2>"$tmpdir/err"
+status=$?
+set -e
+(( status == 1 )) || fail "a later unsafe output name is refused with exit 1, not a timeout" "status=$status $(<"$tmpdir/calls")"
+grep -q "Refusing unsafe monitor name" "$tmpdir/err" || fail "a later unsafe output name is refused with the monitor message" "stderr=$(<"$tmpdir/err")"
+grep -q "exec_cmd" "$tmpdir/calls" && fail "no terminal is launched before every name is checked" "$(<"$tmpdir/calls")"
+grep -q "hl.dsp.focus" "$tmpdir/calls" && fail "a later unsafe output name does not move focus before refusing" "$(<"$tmpdir/calls")"
+pass "every name is checked before the first screensaver is launched"
