@@ -33,12 +33,11 @@ require_safe_monitor_name() {
   fi
 }
 
-# A special workspace is named "special:<name>"; the colon is the one character
-# the monitor guard rejects, so allow it here and refuse anything else that
-# could leave the Lua string.
+# The workspace sits inside a Lua long string and a [workspace ...] rule, which a bracket closes and a semicolon splits,
+# while a special workspace the user named can carry spaces and any letter, like "special:my stuff".
 require_safe_workspace_name() {
   local name=$1
-  if [[ ! $name =~ ^[A-Za-z0-9._:-]+$ ]]; then
+  if [[ -z $name || $name == *"["* || $name == *"]"* || $name == *";"* || $name == *[[:cntrl:]]* ]]; then
     echo "Refusing unsafe workspace name" >&2
     exit 1
   fi

@@ -7,8 +7,11 @@ require_command jq
 require_command lua
 
 tmpdir=$(mktemp -d)
+# Every launch starts its own event reader, so stop each one, or a reader outlives the test holding the runner's output open.
 cleanup() {
-  [[ -f $tmpdir/socat.pid ]] && kill "$(<"$tmpdir/socat.pid")" 2>/dev/null || true
+  local pids=()
+  [[ -f $tmpdir/socat.pid ]] && mapfile -t pids <"$tmpdir/socat.pid"
+  (( ${#pids[@]} > 0 )) && kill "${pids[@]}" 2>/dev/null || true
   rm -rf "$tmpdir"
 }
 trap cleanup EXIT
@@ -37,7 +40,7 @@ esac
 SH
 cat >"$tmpdir/bin/socat" <<'SH'
 #!/bin/bash
-printf '%s\n' "$$" >"$TEST_DIR/socat.pid"
+printf '%s\n' "$$" >>"$TEST_DIR/socat.pid"
 exec cat "$TEST_DIR/events"
 SH
 printf '#!/bin/bash\nexit 1\n' >"$tmpdir/bin/pgrep"
@@ -115,6 +118,20 @@ pass "a screensaver mapped again as it closes stays off the regular workspaces"
 # dispatches, so a name that is not a plain connector (a headless output can
 # carry anything) must be refused rather than interpolated, exactly like the
 # sibling monitor toggles. jq is real, so the payload travels the same pipeline.
+printf '[{"name":"DP-1","specialWorkspace":{"name":"special:my stuff"}}]\n' >"$tmpdir/monitors.json"
+: >"$tmpdir/calls"
+PATH="$tmpdir/bin:$PATH" TEST_DIR="$tmpdir" XDG_RUNTIME_DIR="$tmpdir" HYPRLAND_INSTANCE_SIGNATURE=test \
+  timeout 10 "$ROOT/bin/omarchy-launch-screensaver" force
+for (( attempt = 0; attempt < 100; attempt++ )); do
+  (( $(grep -c 'hl.dsp.focus({ monitor = "DP-1" })' "$tmpdir/calls") == 3 )) && break
+  sleep 0.05
+done
+(( $(grep -c 'hl.dsp.focus({ monitor = "DP-1" })' "$tmpdir/calls") == 3 )) ||
+  fail "a special workspace named with a space still gets the screensaver" "$(<"$tmpdir/calls")"
+grep -q "exec_cmd(\[\[\[workspace special:my stuff\] " "$tmpdir/calls" ||
+  fail "a special workspace named with a space still gets the screensaver" "$(<"$tmpdir/calls")"
+pass "a special workspace named with a space still gets the screensaver"
+
 monitor_name='DP-1\"]]);os.execute([[id]]);--'
 printf '[{"name":"%s","specialWorkspace":{"name":""}}]\n' "$monitor_name" >"$tmpdir/monitors.json"
 : >"$tmpdir/calls"
@@ -142,6 +159,18 @@ grep -q "exec_cmd" "$tmpdir/calls" && fail "an unsafe special-workspace name nev
 grep -q "os.execute" "$tmpdir/calls" && fail "an unsafe special-workspace name cannot inject Lua"
 grep -q "hl.dsp.focus" "$tmpdir/calls" && fail "an unsafe special-workspace name does not move focus before refusing" "$(<"$tmpdir/calls")"
 pass "an unsafe special-workspace name is refused before the Lua dispatch"
+
+# A semicolon cannot leave the Lua string, but it splits the [workspace ...] rule into further window rules.
+printf '[{"name":"DP-1","specialWorkspace":{"name":"special:x;float"}}]\n' >"$tmpdir/monitors.json"
+: >"$tmpdir/calls"
+set +e
+PATH="$tmpdir/bin:$PATH" TEST_DIR="$tmpdir" XDG_RUNTIME_DIR="$tmpdir" HYPRLAND_INSTANCE_SIGNATURE=test timeout 10 "$ROOT/bin/omarchy-launch-screensaver" force >/dev/null 2>"$tmpdir/err"
+status=$?
+set -e
+(( status == 1 )) || fail "a special-workspace name with a semicolon is refused with exit 1" "status=$status $(<"$tmpdir/calls")"
+grep -q "Refusing unsafe workspace name" "$tmpdir/err" || fail "a special-workspace name with a semicolon is refused with the workspace message" "stderr=$(<"$tmpdir/err")"
+grep -q "exec_cmd" "$tmpdir/calls" && fail "a special-workspace name with a semicolon never reaches the dispatch" "$(<"$tmpdir/calls")"
+pass "a special-workspace name with a semicolon cannot add window rules"
 
 # A refusal on a later monitor must not leave an earlier screen on the wrong
 # monitor, so every name is checked before the first terminal is launched.
