@@ -45,7 +45,7 @@ exec cat "$TEST_DIR/events"
 SH
 printf '#!/bin/bash\nexit 1\n' >"$tmpdir/bin/pgrep"
 printf '#!/bin/bash\nexit 1\n' >"$tmpdir/bin/omarchy-toggle-enabled"
-printf '#!/bin/bash\necho DP-1\n' >"$tmpdir/bin/omarchy-hyprland-monitor-focused"
+printf '#!/bin/bash\necho "${FOCUSED_NAME:-DP-1}"\n' >"$tmpdir/bin/omarchy-hyprland-monitor-focused"
 printf '#!/bin/bash\necho foot.desktop\n' >"$tmpdir/bin/xdg-terminal-exec"
 chmod +x "$tmpdir/bin/"*
 
@@ -186,3 +186,15 @@ grep -q "Refusing unsafe monitor name" "$tmpdir/err" || fail "a later unsafe out
 grep -q "exec_cmd" "$tmpdir/calls" && fail "no terminal is launched before every name is checked" "$(<"$tmpdir/calls")"
 grep -q "hl.dsp.focus" "$tmpdir/calls" && fail "a later unsafe output name does not move focus before refusing" "$(<"$tmpdir/calls")"
 pass "every name is checked before the first screensaver is launched"
+
+# The focused monitor's name comes from the same compositor data, and reaches the same dispatch when focus is handed back.
+printf '[{"name":"DP-1","specialWorkspace":{"name":""}}]\n' >"$tmpdir/monitors.json"
+: >"$tmpdir/calls"
+set +e
+FOCUSED_NAME='DP-1"}) os.execute("id") --' PATH="$tmpdir/bin:$PATH" TEST_DIR="$tmpdir" XDG_RUNTIME_DIR="$tmpdir" HYPRLAND_INSTANCE_SIGNATURE=test timeout 10 "$ROOT/bin/omarchy-launch-screensaver" force >/dev/null 2>"$tmpdir/err"
+status=$?
+set -e
+(( status == 1 )) || fail "an unsafe focused monitor name is refused with exit 1, not a timeout" "status=$status $(<"$tmpdir/calls")"
+grep -q "Refusing unsafe monitor name" "$tmpdir/err" || fail "an unsafe focused monitor name is refused with the monitor message" "stderr=$(<"$tmpdir/err")"
+grep -q "os.execute" "$tmpdir/calls" && fail "an unsafe focused monitor name cannot inject Lua" "$(<"$tmpdir/calls")"
+pass "an unsafe focused monitor name is refused before the Lua dispatch"
